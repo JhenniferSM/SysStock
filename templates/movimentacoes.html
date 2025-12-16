@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Histórico - SysStock{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Histórico de Movimentações</h1>
+</div>
+<div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Data/Hora</th>
+                <th>Tipo</th>
+                <th>Produto</th>
+                <th>Qtd</th>
+                <th>Usuário</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in movimentacoes %}
+            <tr>
+                <td>{{ m.data_hora|datetime_format }}</td>
+                <td>
+                    {% set type_class = 'bg-success' if m.tipo == 'ENTRADA' else ('bg-danger' if m.tipo == 'SAIDA' else 'bg-warning') %}
+                    <span class="badge {{ type_class }}">
+                        {{ m.tipo }}
+                    </span>
+                </td>
+                <td>{{ m.prod_codigo }} - {{ m.prod_descricao }}</td>
+                <td style="font-weight:bold;">{{ m.quantidade }}</td>
+                <td>{{ m.usuario_nome }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">Nenhuma movimentação registrada.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<style>
+.badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; color: #fff; }
+.bg-success { background-color: #28a745; }
+.bg-warning { background-color: #ffc107; color: #000; }
+.bg-danger { background-color: #dc3545; }
+</style>
+{% endblock %}

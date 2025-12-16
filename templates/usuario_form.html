@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Editar' if not is_new else 'Novo' }} Usuário{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto;">
+    <h1>{{ 'Editar' if not is_new else 'Cadastrar' }} Usuário</h1>
+    
+    <div class="stat-card">
+        <form method="POST">
+            <div class="form-group">
+                <label>Nome de Usuário * (Login)</label>
+                <input type="text" name="usuario" required 
+                       value="{{ user.usuario if user else '' }}" 
+                       placeholder="Ex: joao.silva">
+            </div>
+            
+            <div class="form-group">
+                <label>Nome Completo *</label>
+                <input type="text" name="nome" required 
+                       value="{{ user.nome if user else '' }}" 
+                       placeholder="Ex: João da Silva">
+            </div>
+
+            <div class="form-group">
+                <label>Senha {{ '' if is_new else '(Deixe em branco para não alterar)' }} *</label>
+                <input type="password" name="senha" {{ 'required' if is_new }}>
+            </div>
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 15px;">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <input type="checkbox" id="is_admin" name="is_admin" 
+                           value="1" {{ 'checked' if user and user.is_admin }}>
+                    <label for="is_admin" style="display:inline; margin-left: 5px;">Usuário Administrador</label>
+                </div>
+                
+                {% if not is_new %}
+                <div class="form-group" style="margin-bottom: 0;">
+                    <input type="checkbox" id="ativo" name="ativo" 
+                           value="1" {{ 'checked' if user.ativo else '' }}>
+                    <label for="ativo" style="display:inline; margin-left: 5px;">Ativo</label>
+                </div>
+                {% endif %}
+            </div>
+
+            <div style="margin-top: 20px; display:flex; gap:10px;">
+                <button type="submit" class="btn btn-primary" style="flex:1">Salvar</button>
+                <a href="{{ url_for('usuarios') }}" class="btn btn-secondary">Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

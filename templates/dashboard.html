@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - SysStock{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p>{{ session.empresa_nome }}</p>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">📦</div>
+        <div class="stat-content">
+            <h3>Total de Produtos</h3>
+            <p class="stat-value">{{ stats.total_produtos }}</p>
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-content">
+            <h3>Estoque Total</h3>
+            <p class="stat-value">{{ stats.estoque_total }}</p>
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-content">
+            <h3>Valor Total (Venda)</h3>
+            <p class="stat-value">{{ stats.valor_total|currency }}</p>
+        </div>
+    </div>
+    
+    {# NOVO CARD #}
+    {% if session.is_admin %}
+    <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-content">
+            <h3>Total de Usuários</h3>
+            <p class="stat-value">{{ stats.total_usuarios }}</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="menu-grid">
+    <a href="{{ url_for('produtos') }}" class="menu-card">
+        <div class="menu-icon">📦</div>
+        <h3>Gerenciar Produtos</h3>
+        <p>Cadastre e gerencie produtos do estoque</p>
+    </a>
+
+    <a href="{{ url_for('contagem') }}" class="menu-card">
+        <div class="menu-icon">📷</div>
+        <h3>Contagem de Estoque</h3>
+        <p>Faça inventários usando o leitor de código de barras</p>
+    </a>
+    
+    <a href="{{ url_for('movimentacoes') }}" class="menu-card">
+        <div class="menu-icon">📰</div>
+        <h3>Histórico de Movimentações</h3>
+        <p>Veja todas as entradas, saídas e contagens</p>
+    </a>
+
+    {% if session.is_admin %}
+    <a href="{{ url_for('usuarios') }}" class="menu-card">
+        <div class="menu-icon">👤</div>
+        <h3>Gerenciar Usuários</h3>
+        <p>Crie, edite e ative/desative usuários do sistema</p>
+    </a>
+    {% endif %}
+</div>
+
+{% if min_stock_produtos %}
+<div class="stat-card" style="margin-top: 30px;">
+    <h2>📉 Produtos com Menor Estoque</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th>Qtd. Atual</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in min_stock_produtos %}
+            <tr>
+                <td>{{ p.codigo }}</td>
+                <td>{{ p.descricao }}</td>
+                <td style="font-weight: bold;">{{ p.quantidade }} {{ p.unidade }}</td>
+                <td><a href="{{ url_for('produto_editar', id=p.id) }}" class="btn btn-secondary btn-sm">Editar</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}

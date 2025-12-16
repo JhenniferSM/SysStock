@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Painel Master - Gestão de Empresas{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+    <h1>🏢 Gestão Multi-Empresarial</h1>
+    <a href="{{ url_for('empresa_nova') }}" class="btn btn-primary">+ Nova Empresa</a>
+</div>
+
+<div class="stat-card" style="margin-top:20px;">
+    <table>
+        <thead>
+            <tr>
+                <th>Tag (Login)</th>
+                <th>Empresa</th>
+                <th>Banco de Dados</th>
+                <th>Status</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for emp in empresas %}
+            <tr>
+                <td><strong>{{ emp.tag }}</strong></td>
+                <td>{{ emp.descricao }}</td>
+                <td>{{ emp.base }}</td>
+                <td>
+                    {% if emp.ativo == 'S' %}
+                    <span style="color:green; font-weight:bold;">Ativa</span>
+                    {% else %}
+                    <span style="color:red; font-weight:bold;">Inativa</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{{ url_for('empresa_editar', id=emp.id) }}" class="btn btn-secondary btn-sm">Editar</a>
+                    <a href="{{ url_for('empresa_toggle_status', id=emp.id) }}" 
+                       class="btn {{ 'btn-danger' if emp.ativo == 'S' else 'btn-success' }} btn-sm"
+                       onclick="return confirm('Alterar status da empresa?')">
+                       {{ 'Desativar' if emp.ativo == 'S' else 'Ativar' }}
+                    </a>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" align="center">Nenhuma empresa cadastrada.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

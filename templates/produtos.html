@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Produtos - SysStock{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h1>Gerenciar Produtos</h1>
+    <a href="{{ url_for('produto_novo') }}" class="btn btn-primary">+ Novo Produto</a>
+</div>
+
+<div class="search-bar" style="margin-bottom: 20px;">
+    <form action="{{ url_for('produtos') }}" method="get" style="display:flex; gap:10px;">
+        <input type="text" name="search" value="{{ search }}" placeholder="Buscar por nome, código ou EAN..." class="form-control" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:5px;">
+        <button type="submit" class="btn btn-secondary">Buscar</button>
+    </form>
+</div>
+
+<div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Cód.</th>
+                <th>EAN</th>
+                <th>Descrição</th>
+                <th>Qtd</th>
+                <th>Preço</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in produtos %}
+            <tr>
+                <td>{{ p.codigo }}</td>
+                <td>{{ p.codigo_barras }}</td>
+                <td>{{ p.descricao }}</td>
+                <td>{{ p.quantidade }} {{ p.unidade }}</td>
+                <td>{{ p.preco_venda|currency }}</td>
+                <td>
+                    <a href="{{ url_for('produto_editar', id=p.id) }}" class="btn btn-secondary" style="font-size:0.8rem; padding:5px 10px;">Editar</a>
+                    {% if session.is_admin %}
+                    <a href="{{ url_for('produto_excluir', id=p.id) }}" class="btn btn-danger" style="font-size:0.8rem; padding:5px 10px;" onclick="return confirm('Tem certeza que deseja excluir logicamente (inativar) este produto?')">Excluir</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align:center; padding:30px;">Nenhum produto encontrado.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

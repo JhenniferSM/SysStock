@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Usuários - SysStock{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h1>👥 Gerenciar Usuários</h1>
+    <a href="{{ url_for('usuario_novo') }}" class="btn btn-primary">+ Novo Usuário</a>
+</div>
+
+<div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Usuário</th>
+                <th>Nome Completo</th>
+                <th>Admin?</th>
+                <th>Status</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in usuarios %}
+            <tr>
+                <td><strong>{{ u.usuario }}</strong></td>
+                <td>{{ u.nome }}</td>
+                <td>
+                    <span class="badge {{ 'bg-primary' if u.is_admin else 'bg-secondary' }}">
+                        {{ 'Sim' if u.is_admin else 'Não' }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge {{ 'bg-success' if u.ativo else 'bg-danger' }}">
+                        {{ 'Ativo' if u.ativo else 'Inativo' }}
+                    </span>
+                </td>
+                <td>
+                    <a href="{{ url_for('usuario_editar', id=u.id) }}" class="btn btn-secondary btn-sm">Editar</a>
+                    {# Não permite desativar o próprio usuário ou o Admin original (id=1) #}
+                    {% if u.id != session.user_id and u.id != 1 %} 
+                        <a href="{{ url_for('usuario_editar', id=u.id) }}" 
+                           class="btn {{ 'btn-danger' if u.ativo else 'btn-success' }} btn-sm"
+                           onclick="return confirm('Alterar status do usuário?')">
+                           {{ 'Desativar' if u.ativo else 'Ativar' }}
+                        </a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" align="center">Nenhum usuário cadastrado.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; color: #fff; display: inline-block; }
+    .bg-primary { background-color: #007bff; }
+    .bg-secondary { background-color: #6c757d; }
+    .bg-success { background-color: #28a745; }
+    .bg-danger { background-color: #dc3545; }
+</style>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Login - SysStock{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <span class="logo-icon">📦</span>
+            <h1>SysStock</h1>
+            <p>Sistema de Gestão de Estoque</p>
+        </div>
+
+        <div class="login-form" method="POST">
+            <div class="form-group">
+                <label for="empresa">Empresa</label>
+                <input type="text" name="empresa" id="empresa" required 
+                       placeholder="Digite a tag da empresa" autofocus>
+            </div>
+
+            <div class="form-group">
+                <label for="usuario">Usuário</label>
+                <input type="text" name="usuario" id="usuario" required 
+                       placeholder="Digite seu usuário">
+            </div>
+
+            <div class="form-group">
+                <label for="senha">Senha</label>
+                <input type="password" name="senha" id="senha" required 
+                       placeholder="Digite sua senha">
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block" 
+                    onclick="handleLogin(event)">
+                Entrar
+            </button>
+        </div>
+
+        <div class="login-footer">
+            <p><strong>Dados de teste:</strong></p>
+            <p>Empresa: <strong>zactiti</strong></p>
+            <p>Usuário: <strong>admin</strong> / Senha: <strong>123456</strong></p>
+        </div>
+    </div>
+</div>
+
+<script>
+function handleLogin(event) {
+    event.preventDefault();
+
+    const empresa = document.getElementById('empresa').value;
+    const usuario = document.getElementById('usuario').value;
+    const senha = document.getElementById('senha').value;
+
+    fetch('/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: `empresa=${encodeURIComponent(empresa)}&usuario=${encodeURIComponent(usuario)}&senha=${encodeURIComponent(senha)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = data.redirect;
+        } else {
+            alert(data.message || 'Falha no login');
+        }
+    })
+    .catch(err => {
+        console.error('Erro no fetch:', err);
+        alert('Erro de conexão ao tentar logar.');
+    });
+}
+</script>
+{% endblock %}
