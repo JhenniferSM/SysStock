@@ -4,6 +4,11 @@ from mysql.connector import Error
 from functools import wraps
 from datetime import datetime
 import re
+import os
+from dotenv import load_dotenv
+import gunicorn
+
+load_dotenv()
 
 # ==================== FUNÇÕES AUXILIARES ====================
 
@@ -21,16 +26,31 @@ def clean_float(valor):
 # ==================== CONFIGURAÇÃO DO FLASK ====================
 
 app = Flask(__name__)
-app.secret_key = 'chave_secreta_muito_forte_' + str(datetime.now().timestamp())
+app.secret_key = os.getenv('FLASK_SECRET_KEY') + str(datetime.now().timestamp())
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hora
 
 CENTRAL_CONFIG = {
-    'host': '127.0.0.1',
-    'user': 'root',
-    'password': 'root',
-    'database': 'empresas',
-    'port': 3306
+    'host': os.getenv('CENTRAL_DB_HOST'),
+    'user': os.getenv('CENTRAL_DB_USER'),
+    'password': os.getenv('CENTRAL_DB_PASSWORD'),
+    'database': os.getenv('CENTRAL_DB_NAME'),
+    'port': int(os.getenv('CENTRAL_DB_PORT', 3306))
 }
+
+def validar_env():
+    obrigatorias = [
+        'FLASK_SECRET_KEY',
+        'CENTRAL_DB_HOST',
+        'CENTRAL_DB_USER',
+        'CENTRAL_DB_PASSWORD',
+        'CENTRAL_DB_NAME',
+        'CENTRAL_DB_PORT'
+    ]
+    for var in obrigatorias:
+        if not os.getenv(var):
+            raise RuntimeError(f'Variável de ambiente ausente: {var}')
+
+validar_env()
 
 # Estrutura SQL para um novo banco de dados de empresa filha
 SCHEMA_SQL_CONTENT = """
@@ -420,7 +440,8 @@ def dashboard():
     stats = executar_query(empresa_config, query_stats, fetch=True, single=True)
     
     # 2. Obter Top 5 Produtos com Menor Estoque
-    query_min_stock = "SELECT codigo, descricao, quantidade, unidade FROM produtos WHERE ativo = 1 ORDER BY quantidade ASC LIMIT 5"
+    query_min_stock = "SELECT id, codigo, descricao, quantidade, unidade FROM produtos WHERE ativo = 1 ORDER BY quantidade ASC LIMIT 5"
+    query_min_stock = "SELECT id, codigo, descricao, quantidade, unidade FROM produtos WHERE ativo = 1 ORDER BY quantidade ASC LIMIT 5"
     min_stock_produtos = executar_query(empresa_config, query_min_stock, fetch=True)
 
     # 3. Obter Total de Usuários
@@ -705,16 +726,36 @@ def api_contagem_add():
     empresa_config = session.get('empresa_config')
     data = request.json
     
-    identifier = data.get('identifier') # Pode ser codigo ou ean
+    identifier = str(data.get('identifier', '')).strip()
+    identifier = re.sub(r'\D', '', identifier)
+
+    identifier_sem_dv = identifier[:-1] if len(identifier) == 13 else identifier
+    
     quantidade = clean_float(data.get('quantidade', 1))
 
     if not identifier or quantidade <= 0:
         return jsonify({'success': False, 'message': 'Dados inválidos.'})
 
     # 1. Busca o produto (pelo código ou EAN)
-    query_produto = "SELECT id, codigo, descricao, unidade FROM produtos WHERE ativo = 1 AND (codigo = %s OR codigo_barras = %s)"
-    produto = executar_query(empresa_config, query_produto, (identifier, identifier), fetch=True, single=True)
-    
+    query_produto = """
+    SELECT id, codigo, descricao, unidade
+    FROM produtos
+    WHERE ativo = 1
+    AND (
+        codigo_barras = %s
+        OR codigo_barras = %s
+        OR codigo = %s
+    )
+    LIMIT 1
+    """
+    produto = executar_query(
+        empresa_config,
+        query_produto,
+        (identifier, identifier_sem_dv, identifier),
+        fetch=True,
+        single=True
+    )
+
     if not produto:
         return jsonify({'success': False, 'message': f'Produto não encontrado: {identifier}'})
 
@@ -866,4 +907,4 @@ def datetime_filter(value, format="%d/%m/%Y %H:%M:%S"):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run()

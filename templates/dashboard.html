@@ -88,10 +88,10 @@
         <tbody>
             {% for p in min_stock_produtos %}
             <tr>
-                <td>{{ p.codigo }}</td>
-                <td>{{ p.descricao }}</td>
-                <td style="font-weight: bold;">{{ p.quantidade }} {{ p.unidade }}</td>
-                <td><a href="{{ url_for('produto_editar', id=p.id) }}" class="btn btn-secondary btn-sm">Editar</a></td>
+                <td>{{ p['codigo']}}</td>
+                <td>{{ p['descricao'] }}</td>
+                <td style="font-weight: bold;">{{ p['quantidade'] }} {{ p['unidade'] }}</td>
+                <td><a href="{{ url_for('produto_editar', id=p['id']) }}" class="btn btn-secondary btn-sm">Editar</a></td>
             </tr>
             {% endfor %}
         </tbody>

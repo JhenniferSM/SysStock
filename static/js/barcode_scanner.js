@@ -5,7 +5,6 @@ let lastCode = '';
 let lastCodeTime = 0;
 const DEBOUNCE_TIME = 1000; // 1 segundo
 
-// Função para iniciar/parar a câmera
 function toggleCamera() {
     const btn = document.getElementById('btnCamera');
     const status = document.getElementById('statusCamera');
@@ -72,8 +71,10 @@ function toggleCamera() {
         Quagga.onDetected(function (result) {
             if (isProcessing) return; // Debounce do detector
 
-            const code = result.codeResult.code;
-            processarCodigo(code, 1.0);
+            const code = String(result.codeResult.code).trim();
+            const qtdInput = document.getElementById('inputQtd');
+            const quantidade = qtdInput ? parseFloat(qtdInput.value) || 1 : 1;
+            processarCodigo(code, quantidade);
         });
         
     } else {
@@ -93,7 +94,6 @@ function processarCodigo(code, quantidade) {
 
     // Debounce: Ignora leituras repetidas em um curto período
     if (code === lastCode && (currentTime - lastCodeTime) < DEBOUNCE_TIME) {
-        // console.log("Código ignorado (debounce):", code);
         return;
     }
     
@@ -183,29 +183,32 @@ function atualizarTabelaContagem(itens) {
             <td>${item.descricao}</td>
             <td style="font-weight:bold;">${item.quantidade}</td>
             <td>
-                <button class="btn btn-danger btn-sm" onclick="removerItemLocal(${item.produto_id}, ${item.quantidade})">Zerar</button>
+               <button class="btn btn-danger btn-sm"
+                onclick="removerItemLocal(${item.produto_id}, '${item.codigo}', ${item.quantidade})"
+                Zerar
+                </button>
             </td>
         `;
     });
 }
 
-// Remove o item da lista local e limpa no banco (chamada pelo botão "Zerar")
-function removerItemLocal(produtoId, quantidade) {
-    if (!confirm(`Tem certeza que deseja zerar o item (ID: ${produtoId}) da contagem?`)) {
+function removerItemLocal(produtoId, codigo, quantidade) {
+    if (!confirm(`Tem certeza que deseja zerar o item ${codigo} da contagem?`)) {
         return;
     }
-    
-    // Zera a quantidade na contagem_itens
+
     fetch('/api/contagem/add', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ identifier: produtoId, quantidade: -quantidade }) // Passa a quantidade negativa para zerar
+        body: JSON.stringify({
+            identifier: String(codigo),
+            quantidade: -quantidade
+        })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             flashMensagem('Item zerado na contagem temporária!', 'info');
-            // Atualiza a lista local removendo o item zerado
             contagemItens = contagemItens.filter(item => item.produto_id !== produtoId);
             atualizarTabelaContagem(contagemItens);
         } else {
@@ -217,7 +220,6 @@ function removerItemLocal(produtoId, quantidade) {
         flashMensagem('Erro de comunicação ao zerar o item.', 'error');
     });
 }
-
 
 // Função para finalizar a contagem e salvar no estoque principal
 function finalizarContagem() {
