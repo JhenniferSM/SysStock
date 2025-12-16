@@ -12,7 +12,17 @@
                 <label>Tag de Login * (Sem espaços, ex: zactiti)</label>
                 <input type="text" name="tag" required value="{{ empresa.tag if empresa else '' }}" style="text-transform:lowercase" placeholder="Digite a tag da empresa">
             </div>
-            
+     <h4>Administrador da Empresa</h4>
+
+                <label>Usuário admin</label>
+                <input type="text" name="admin_usuario" required>
+
+                <label>Nome do admin</label>
+                <input type="text" name="admin_nome" required>
+
+                <label>Senha do admin</label>
+                <input type="password" name="admin_senha" required>
+
             <div class="form-group">
                 <label>Nome da Empresa *</label>
                 <input type="text" name="descricao" required value="{{ empresa.descricao if empresa else '' }}" placeholder="Digite o nome completo da empresa">

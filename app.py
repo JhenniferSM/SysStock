@@ -285,38 +285,59 @@ def empresa_nova():
     if not session.get('is_master'):
         flash('Acesso negado.', 'error')
         return redirect(url_for('dashboard'))
-        
+
     if request.method == 'POST':
         tag = request.form['tag'].lower().strip()
         descricao = request.form['descricao'].strip()
         host = request.form['host'].strip()
-        port = request.form['port'].strip()
+        port = int(request.form['port'])
         base = request.form['base'].strip()
         user = request.form['user'].strip()
         password = request.form['pass'].strip()
-        
+
+        admin_usuario = request.form['admin_usuario'].strip()
+        admin_nome = request.form['admin_nome'].strip()
+        admin_senha = request.form['admin_senha'].strip()
+
+        if not admin_usuario or not admin_senha:
+            flash('Usuário e senha do administrador são obrigatórios.', 'error')
+            return render_template('empresa_form.html')
+
         empresa_config = {
             'host': host,
             'user': user,
             'password': password,
             'database': base,
-            'port': int(port)
+            'port': port
         }
 
-        # 1. Cria a estrutura do banco de dados (DB + Tabelas + Admin Padrão)
+        # 1️⃣ Cria banco + tabelas
         if not criar_estrutura_banco_empresa(empresa_config):
-            flash(f'Falha ao criar o banco de dados/estrutura para "{descricao}".', 'error')
+            flash('Erro ao criar estrutura do banco da empresa.', 'error')
             return render_template('empresa_form.html')
 
-        # 2. Insere a configuração no banco central
-        query = "INSERT INTO empresas (tag, descricao, host, port, user, pass, base, ativo) VALUES (%s, %s, %s, %s, %s, %s, %s, 'S')"
-        params = (tag, descricao, host, port, user, password, base)
-        
-        if executar_query(CENTRAL_CONFIG, query, params, fetch=False):
-            flash(f'Empresa "{descricao}" cadastrada e estrutura criada com sucesso!', 'success')
-            return redirect(url_for('gerenciar_empresas'))
-        else:
-            flash(f'Falha ao cadastrar a empresa "{descricao}" no registro central.', 'error')
+        # 2️⃣ Cria ADMIN da empresa
+        query_admin = """
+            INSERT INTO usuarios (usuario, nome, senha, ativo, is_admin)
+            VALUES (%s, %s, SHA2(%s, 256), 1, 1)
+        """
+        params_admin = (admin_usuario, admin_nome, admin_senha)
+
+        if not executar_query(empresa_config, query_admin, params_admin):
+            flash('Erro ao criar administrador da empresa.', 'error')
+            return render_template('empresa_form.html')
+
+        # 3️⃣ Registra empresa no banco central
+        query_empresa = """
+            INSERT INTO empresas (tag, descricao, host, port, user, pass, base, ativo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'S')
+        """
+        params_empresa = (tag, descricao, host, port, user, password, base)
+
+        executar_query(CENTRAL_CONFIG, query_empresa, params_empresa)
+
+        flash(f'Empresa "{descricao}" criada com sucesso!', 'success')
+        return redirect(url_for('gerenciar_empresas'))
 
     return render_template('empresa_form.html', empresa=None)
 
@@ -406,13 +427,20 @@ def dashboard():
     query_total_users = "SELECT COUNT(id) AS total_usuarios FROM usuarios WHERE ativo = 1"
     total_users = executar_query(empresa_config, query_total_users, fetch=True, single=True)
     
-    if stats is None:
-        stats = {'total_produtos': 0, 'quantidade_total': 0, 'valor_venda_total': 0}
-        
-    stats['estoque_total'] = round(stats.pop('quantidade_total', 0) if stats else 0, 3)
-    stats['valor_total'] = round(stats.pop('valor_venda_total', 0) if stats else 0, 2)
-    stats['total_produtos'] = stats.pop('total_produtos', 0) if stats else 0
-    stats['total_usuarios'] = total_users['total_usuarios'] if total_users else 0
+    if not stats:
+        stats = {}
+
+    quantidade_total = stats.get('quantidade_total') or 0
+    valor_total = stats.get('valor_venda_total') or 0
+    total_produtos = stats.get('total_produtos') or 0
+
+    stats = {
+        'estoque_total': round(float(quantidade_total), 3),
+        'valor_total': round(float(valor_total), 2),
+        'total_produtos': total_produtos,
+        'total_usuarios': total_users['total_usuarios'] if total_users else 0
+    }
+
     
     return render_template('dashboard.html', stats=stats, min_stock_produtos=min_stock_produtos)
 
