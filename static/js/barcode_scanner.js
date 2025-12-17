@@ -1,9 +1,12 @@
 let cameraActive = false;
-let contagemItens = []; // Lista local de itens contados
+let contagemItens = [];
 let isProcessing = false;
 let lastCode = '';
 let lastCodeTime = 0;
-const DEBOUNCE_TIME = 1000; // 1 segundo
+const DEBOUNCE_TIME = 1500; // 1.5 segundos
+
+// Variável global para controlar a quantidade de requisições simultâneas
+let requestInProgress = false;
 
 function toggleCamera() {
     const btn = document.getElementById('btnCamera');
@@ -12,7 +15,16 @@ function toggleCamera() {
     const interactive = document.querySelector('#interactive');
 
     if (!cameraActive) {
+        // Verifica se está em HTTPS ou localhost
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            alert('⚠️ ATENÇÃO: A câmera só funciona em HTTPS!\n\nVerifique se seu site no Render está usando HTTPS.');
+            return;
+        }
+
         // INICIAR CÂMERA
+        status.textContent = "Inicializando...";
+        status.style.color = "orange";
+        
         Quagga.init({
             inputStream: {
                 name: "Live",
@@ -20,71 +32,94 @@ function toggleCamera() {
                 target: interactive,
                 constraints: {
                     facingMode: "environment",
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
+                    width: { min: 640, ideal: 1280, max: 1920 },
+                    height: { min: 480, ideal: 720, max: 1080 },
+                    aspectRatio: { ideal: 16/9 }
                 },
-                area: { // Define área de escaneamento
-                    top: "20%",
+                area: {
+                    top: "15%",
                     right: "10%",
                     left: "10%",
-                    bottom: "20%"
+                    bottom: "15%"
                 }
             },
             locator: {
                 patchSize: "medium",
                 halfSample: true
             },
-            numOfWorkers: 4,
+            numOfWorkers: navigator.hardwareConcurrency || 4,
             decoder: {
                 readers: [
                     "ean_reader",
-                    "ean_8_reader", 
+                    "ean_8_reader",
                     "code_128_reader",
                     "code_39_reader",
+                    "code_39_vin_reader",
                     "upc_reader",
-                    "upc_e_reader"
+                    "upc_e_reader",
+                    "i2of5_reader"
                 ],
-                debug: {
-                    drawBoundingBox: true,
-                    showFrequency: true,
-                    drawScanline: true,
-                    showPattern: true
-                }
+                multiple: false
             },
-            locate: true
+            locate: true,
+            frequency: 10
         }, function (err) {
             if (err) {
-                console.error(err);
-                status.textContent = "Erro ao Iniciar: " + err.name;
+                console.error("❌ Erro ao iniciar Quagga:", err);
+                status.textContent = "Erro: " + err.name;
                 status.style.color = "red";
-                btn.textContent = "▶️ Ligar Câmera / Iniciar Scanner";
+                btn.textContent = "▶️ Ligar Câmera";
+                
+                if (err.name === 'NotAllowedError') {
+                    alert('❌ Permissão de câmera negada!\n\nVá nas configurações do navegador e permita o acesso à câmera.');
+                } else if (err.name === 'NotFoundError') {
+                    alert('❌ Câmera não encontrada!\n\nVerifique se seu dispositivo tem uma câmera disponível.');
+                } else {
+                    alert('❌ Erro ao iniciar câmera: ' + err.message);
+                }
                 return;
             }
+            
+            console.log("✅ Quagga iniciado com sucesso");
             Quagga.start();
             cameraActive = true;
-            status.textContent = "Ativa (Pronta)";
+            status.textContent = "✓ Ativa e Pronta";
             status.style.color = "lightgreen";
             overlay.style.display = 'block';
             btn.textContent = "⏸️ Parar Scanner";
         });
 
+        // Handler de detecção de código
         Quagga.onDetected(function (result) {
-            if (isProcessing) return; // Debounce do detector
+            if (isProcessing || requestInProgress) {
+                console.log("⏳ Processamento em andamento, ignorando leitura...");
+                return;
+            }
 
             const code = String(result.codeResult.code).trim();
+            
+            // Validação básica do código
+            if (!code || code.length < 3) {
+                console.log("❌ Código inválido ou muito curto:", code);
+                return;
+            }
+            
             const qtdInput = document.getElementById('inputQtd');
             const quantidade = qtdInput ? parseFloat(qtdInput.value) || 1 : 1;
+            
+            console.log(`📷 Código detectado: ${code} | Qtd: ${quantidade}`);
             processarCodigo(code, quantidade);
         });
         
     } else {
         // PARAR CÂMERA
+        console.log("⏹️ Parando câmera...");
         Quagga.stop();
         cameraActive = false;
         status.textContent = "Inativa";
         status.style.color = "yellow";
         overlay.style.display = 'none';
-        btn.textContent = "▶️ Ligar Câmera / Iniciar Scanner";
+        btn.textContent = "▶️ Ligar Câmera";
     }
 }
 
@@ -92,171 +127,223 @@ function toggleCamera() {
 function processarCodigo(code, quantidade) {
     const currentTime = new Date().getTime();
 
-    // Debounce: Ignora leituras repetidas em um curto período
+    // Debounce: Ignora leituras repetidas em curto período
     if (code === lastCode && (currentTime - lastCodeTime) < DEBOUNCE_TIME) {
+        console.log(`⏭️ Código ${code} ignorado (debounce)`);
         return;
     }
     
     lastCode = code;
     lastCodeTime = currentTime;
-    
-    // Adiciona uma contagem e trava o processamento
     isProcessing = true;
     
+    console.log(`🔄 Processando código: ${code}`);
     adicionarItemApi(code, quantidade);
 }
 
-
 // Função para chamar a API e adicionar o item
 function adicionarItemApi(identifier, quantidade) {
-    const inputQtd = document.getElementById('inputQtd');
+    if (requestInProgress) {
+        console.warn("⚠️ Requisição já em andamento, aguarde...");
+        return;
+    }
+
+    requestInProgress = true;
+    const startTime = Date.now();
+    
+    console.log(`📤 Enviando para API: ${identifier} | Qtd: ${quantidade}`);
     
     fetch('/api/contagem/add', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ identifier: identifier, quantidade: quantidade })
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            identifier: identifier, 
+            quantidade: quantidade 
+        })
     })
-    .then(response => response.json())
+    .then(response => {
+        const elapsed = Date.now() - startTime;
+        console.log(`⏱️ Resposta recebida em ${elapsed}ms`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.success) {
             beep();
-            console.log("✅ Adicionado/Atualizado:", data.produto.descricao, "Qtd:", quantidade);
+            console.log("✅ Sucesso:", data.message);
             flashMensagem(`✅ ${data.message}`, 'success');
             
-            // Atualiza a lista local e a tabela
-            let itemAtualizado = false;
-            for (let i = 0; i < contagemItens.length; i++) {
-                if (contagemItens[i].produto_id === data.produto.id) {
-                    contagemItens[i].quantidade += quantidade;
-                    itemAtualizado = true;
-                    break;
+            // Se o item foi removido
+            if (data.removed) {
+                contagemItens = contagemItens.filter(item => item.produto_id !== data.produto.id);
+            } else {
+                // Atualiza ou adiciona na lista local
+                let itemAtualizado = false;
+                for (let i = 0; i < contagemItens.length; i++) {
+                    if (contagemItens[i].produto_id === data.produto.id) {
+                        contagemItens[i].quantidade += quantidade;
+                        itemAtualizado = true;
+                        break;
+                    }
                 }
-            }
-            if (!itemAtualizado) {
-                // Se não encontrou, é um novo item
-                contagemItens.unshift({ // Adiciona no início
-                    id: Date.now(), // ID temporário para lista local
-                    produto_id: data.produto.id,
-                    codigo: data.produto.codigo,
-                    descricao: data.produto.descricao,
-                    quantidade: quantidade
-                });
+                
+                if (!itemAtualizado) {
+                    contagemItens.unshift({
+                        id: Date.now(),
+                        produto_id: data.produto.id,
+                        codigo: data.produto.codigo,
+                        descricao: data.produto.descricao,
+                        quantidade: quantidade
+                    });
+                }
             }
             
             atualizarTabelaContagem(contagemItens);
             
         } else {
-            console.error("❌ Produto não encontrado:", identifier);
-            flashMensagem(`❌ ${data.message || 'Produto não encontrado no sistema.'}`, 'error');
+            console.error("❌ Erro da API:", data.message);
+            flashMensagem(`❌ ${data.message || 'Produto não encontrado'}`, 'error');
         }
+        
         isProcessing = false;
+        requestInProgress = false;
         
     })
     .catch(err => {
         console.error("❌ Erro de rede:", err);
-        flashMensagem('❌ Erro de comunicação com o servidor.', 'error');
+        flashMensagem(`❌ Erro: ${err.message}`, 'error');
         isProcessing = false;
+        requestInProgress = false;
     });
 }
 
-
-// Atualiza a tabela com os itens contados (chamada pelo app.js/contagem.html)
+// Atualiza a tabela com os itens contados
 function atualizarTabelaContagem(itens) {
     const tabelaBody = document.querySelector('#tabelaContagem tbody');
-    if (!tabelaBody) return;
-
-    tabelaBody.innerHTML = '';
-    window.contagemItens = itens; // Sincroniza a lista global
-    
-    if (!itens || itens.length === 0) {
-        tabelaBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:15px;">Comece a escanear!</td></tr>';
+    if (!tabelaBody) {
+        console.warn("⚠️ Tabela de contagem não encontrada");
         return;
     }
 
-    // Ordena por data_registro (ou ID temporário, se for só a lista local)
-    itens.sort((a, b) => (b.id || b.data_registro) - (a.id || a.data_registro)); 
+    tabelaBody.innerHTML = '';
+    window.contagemItens = itens;
+    
+    if (!itens || itens.length === 0) {
+        tabelaBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px; color:#999;">📦 Comece a escanear ou buscar produtos!</td></tr>';
+        return;
+    }
+
+    // Ordena por ID (mais recente primeiro)
+    itens.sort((a, b) => (b.id || 0) - (a.id || 0));
 
     itens.forEach(item => {
         const row = tabelaBody.insertRow();
         row.innerHTML = `
-            <td>${item.codigo}</td>
+            <td><strong>${item.codigo}</strong></td>
             <td>${item.descricao}</td>
-            <td style="font-weight:bold;">${item.quantidade}</td>
+            <td style="font-weight:bold; color:#667eea;">${item.quantidade.toFixed(3)}</td>
             <td>
-               <button class="btn btn-danger btn-sm"
-                onclick="removerItemLocal(${item.produto_id}, '${item.codigo}', ${item.quantidade})"
-                Zerar
+                <button class="btn btn-danger btn-sm" 
+                        onclick="removerItemLocal('${item.codigo}')"
+                        title="Zerar este item da contagem">
+                    🗑️ Zerar
                 </button>
             </td>
         `;
     });
+    
+    console.log(`📊 Tabela atualizada: ${itens.length} itens`);
 }
 
-function removerItemLocal(produtoId, codigo, quantidade) {
-    if (!confirm(`Tem certeza que deseja zerar o item ${codigo} da contagem?`)) {
+// Remove item da contagem (zera)
+function removerItemLocal(codigo) {
+    if (!confirm(`Confirma zerar o item ${codigo} da contagem temporária?`)) {
         return;
     }
+
+    const item = contagemItens.find(i => i.codigo === codigo);
+    if (!item) {
+        flashMensagem('❌ Item não encontrado na lista local', 'error');
+        return;
+    }
+
+    console.log(`🗑️ Zerando item: ${codigo} (qtd: ${item.quantidade})`);
 
     fetch('/api/contagem/add', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             identifier: String(codigo),
-            quantidade: -quantidade
+            quantidade: -item.quantidade
         })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            flashMensagem('Item zerado na contagem temporária!', 'info');
-            contagemItens = contagemItens.filter(item => item.produto_id !== produtoId);
+            console.log("✅ Item zerado com sucesso");
+            flashMensagem('✅ Item removido da contagem!', 'success');
+            contagemItens = contagemItens.filter(i => i.codigo !== codigo);
             atualizarTabelaContagem(contagemItens);
         } else {
-            flashMensagem(`❌ Erro ao zerar: ${data.message}`, 'error');
+            console.error("❌ Erro ao zerar:", data.message);
+            flashMensagem(`❌ ${data.message}`, 'error');
         }
     })
     .catch(err => {
-        console.error("❌ Erro ao zerar:", err);
-        flashMensagem('Erro de comunicação ao zerar o item.', 'error');
+        console.error("❌ Erro de rede ao zerar:", err);
+        flashMensagem('❌ Erro de comunicação', 'error');
     });
 }
 
-// Função para finalizar a contagem e salvar no estoque principal
+// Finalizar a contagem
 function finalizarContagem() {
     if (!contagemItens || contagemItens.length === 0) {
-        alert('Nenhum item na lista para finalizar.');
+        alert('❌ Nenhum item na lista para finalizar.');
         return;
     }
     
-    if (!confirm(`Tem certeza que deseja FINALIZAR a contagem? Isso atualizará o estoque principal de ${contagemItens.length} produtos.`)) {
+    if (!confirm(`⚠️ ATENÇÃO!\n\nVocê vai finalizar a contagem de ${contagemItens.length} produtos.\nIsso irá SUBSTITUIR as quantidades no estoque principal.\n\nDeseja continuar?`)) {
         return;
     }
 
     const btnFinalizar = document.getElementById('btnFinalizar');
     const textoOriginal = btnFinalizar.textContent;
     btnFinalizar.disabled = true;
-    btnFinalizar.textContent = 'Salvando... Aguarde.';
+    btnFinalizar.textContent = '⏳ Salvando... Aguarde';
+    
+    console.log(`💾 Finalizando contagem: ${contagemItens.length} itens`);
     
     fetch('/api/contagem/finalizar', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'}
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.success) {
-            flashMensagem(`✅ Contagem finalizada! ${data.total_itens} produtos atualizados no estoque.`, 'success');
-            // Limpa a lista e a tabela
+            console.log(`✅ Contagem finalizada: ${data.total_itens} itens`);
+            flashMensagem(`✅ Contagem finalizada! ${data.total_itens} produtos atualizados.`, 'success');
             contagemItens = [];
             atualizarTabelaContagem(contagemItens);
         } else {
-            flashMensagem(`❌ Erro ao finalizar: ${data.message}`, 'error');
+            console.error("❌ Erro ao finalizar:", data.message);
+            flashMensagem(`❌ ${data.message}`, 'error');
         }
-        btnFinalizar.disabled = false;
-        btnFinalizar.textContent = textoOriginal;
     })
     .catch(err => {
-        console.error("❌ Erro ao salvar:", err);
-        flashMensagem('Erro ao comunicar com o servidor!', 'error');
+        console.error("❌ Erro ao finalizar:", err);
+        flashMensagem(`❌ Erro: ${err.message}`, 'error');
+    })
+    .finally(() => {
         btnFinalizar.disabled = false;
         btnFinalizar.textContent = textoOriginal;
     });
@@ -266,41 +353,52 @@ function finalizarContagem() {
 function beep() {
     try {
         const context = new (window.AudioContext || window.webkitAudioContext)();
-        if (!context) return;
-        
         const oscillator = context.createOscillator();
         const gainNode = context.createGain();
         
         oscillator.connect(gainNode);
         gainNode.connect(context.destination);
         
-        oscillator.type = "square";
-        oscillator.frequency.value = 660;
-        gainNode.gain.value = 0.1;
+        oscillator.type = "sine";
+        oscillator.frequency.value = 880;
+        gainNode.gain.value = 0.15;
         
         oscillator.start();
-        setTimeout(() => {
-            if (oscillator.stop) oscillator.stop();
-        }, 100);
+        setTimeout(() => oscillator.stop(), 120);
     } catch(e) {
-        console.log("Beep não disponível/permitido:", e);
+        console.log("🔇 Beep não disponível:", e.message);
     }
 }
 
-// Função para exibir flash message (copiada do main.js)
+// Flash message
 function flashMensagem(message, category) {
     const mainContainer = document.querySelector('main.container');
+    if (!mainContainer) return;
+    
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${category}`;
     alertDiv.textContent = message;
+    alertDiv.style.animation = 'slideIn 0.3s ease-out';
     
-    // Adiciona o novo alerta no início do container principal
     mainContainer.insertBefore(alertDiv, mainContainer.firstChild);
 
-    // Auto-esconder após 5 segundos
     setTimeout(() => {
         alertDiv.style.transition = 'opacity 0.5s';
         alertDiv.style.opacity = '0';
         setTimeout(() => alertDiv.remove(), 500);
-    }, 5000);
+    }, 4000);
 }
+
+// Diagnóstico do sistema
+function diagnosticarSistema() {
+    console.log("=== DIAGNÓSTICO DO SISTEMA ===");
+    console.log("🌐 Protocolo:", location.protocol);
+    console.log("🏠 Hostname:", location.hostname);
+    console.log("📱 User Agent:", navigator.userAgent);
+    console.log("🎥 MediaDevices:", !!navigator.mediaDevices);
+    console.log("🔐 HTTPS:", location.protocol === 'https:');
+    console.log("==============================");
+}
+
+// Executa diagnóstico ao carregar
+diagnosticarSistema();

@@ -13,17 +13,22 @@ app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'chave_secreta_padrao_mude_me')
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600
 
-# ==================== CONEXÃO ÚNICA ====================
+# ==================== CONEXÃO COM POOL ====================
 
 def get_db_connection():
-    """Conexão única com o banco multi-tenant"""
+    """Conexão com tratamento melhorado para Railway/Render"""
     try:
         conn = mysql.connector.connect(
             host=os.getenv('DB_HOST'),
             user=os.getenv('DB_USER'),
             password=os.getenv('DB_PASSWORD'),
             database=os.getenv('DB_NAME'),
-            port=int(os.getenv('DB_PORT', 3306))
+            port=int(os.getenv('DB_PORT', 3306)),
+            connect_timeout=10,  # Timeout de 10 segundos
+            autocommit=False,
+            pool_name='sysstock_pool',
+            pool_size=5,
+            pool_reset_session=True
         )
         return conn
     except Error as e:
@@ -31,25 +36,35 @@ def get_db_connection():
         return None
 
 def executar_query(query, params=None, fetch=False, single=False):
-    """Executa query com tratamento de erro"""
+    """Executa query com tratamento de erro melhorado"""
     conn = get_db_connection()
     if conn is None:
+        print("❌ Falha ao obter conexão")
         return None
+    
+    cursor = None
     try:
         cursor = conn.cursor(dictionary=True, buffered=True)
         cursor.execute(query, params or ())
+        
         if fetch:
             result = cursor.fetchone() if single else cursor.fetchall()
         else:
             conn.commit()
             result = True
+        
         return result
+        
     except Error as e:
         print(f"❌ Erro query: {e}")
+        if conn:
+            conn.rollback()
         return None
+        
     finally:
-        if conn and conn.is_connected():
+        if cursor:
             cursor.close()
+        if conn and conn.is_connected():
             conn.close()
 
 # ==================== UTILITÁRIOS ====================
@@ -181,14 +196,12 @@ def empresa_nova():
             
         cursor = conn.cursor()
         try:
-            # Cria Empresa
             cursor.execute(
                 "INSERT INTO empresas (tag, descricao, ativo) VALUES (%s, %s, 'S')",
                 (tag, descricao)
             )
             empresa_id = cursor.lastrowid
 
-            # Cria Admin da Empresa
             cursor.execute("""
                 INSERT INTO usuarios (empresa_id, usuario, nome, senha, is_admin, ativo)
                 VALUES (%s, %s, %s, SHA2(%s, 256), 1, 1)
@@ -218,7 +231,6 @@ def empresa_editar(id):
             return redirect(url_for('gerenciar_empresas'))
         return render_template('empresa_form.html', empresa=empresa)
     
-    # POST - Atualização
     tag = request.form['tag'].lower().strip()
     descricao = request.form['descricao'].strip()
     
@@ -248,7 +260,6 @@ def dashboard():
     
     emp_id = session['empresa_id']
     
-    # Stats
     query_stats = """
         SELECT 
             COUNT(id) as total_produtos,
@@ -269,7 +280,6 @@ def dashboard():
         'total_usuarios': total_users['total'] or 0
     }
 
-    # Top 5 baixo estoque
     query_min = """
         SELECT id, codigo, descricao, quantidade, unidade 
         FROM produtos 
@@ -465,7 +475,7 @@ def movimentacoes():
     movs = executar_query(query, (session['empresa_id'],), fetch=True)
     return render_template('movimentacoes.html', movimentacoes=movs)
 
-# ==================== CONTAGEM ====================
+# ==================== CONTAGEM (CORRIGIDO) ====================
 
 @app.route('/contagem')
 @login_required
@@ -483,48 +493,87 @@ def contagem():
 @app.route('/api/contagem/add', methods=['POST'])
 @login_required
 def api_contagem_add():
-    data = request.json
-    ident = re.sub(r'\D', '', str(data.get('identifier', '')))
-    qtd = clean_float(data.get('quantidade', 1))
-    emp_id = session['empresa_id']
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
+            
+        ident = re.sub(r'\D', '', str(data.get('identifier', '')))
+        qtd = clean_float(data.get('quantidade', 1))
+        emp_id = session['empresa_id']
 
-    query_prod = """
-        SELECT id, codigo, descricao 
-        FROM produtos 
-        WHERE empresa_id = %s AND ativo = 1 
-        AND (codigo_barras = %s OR codigo = %s)
-    """
-    prod = executar_query(query_prod, (emp_id, ident, ident), fetch=True, single=True)
-    
-    if not prod:
-        return jsonify({'success': False, 'message': 'Produto não encontrado.'})
+        print(f"🔍 Buscando produto: {ident}")
 
-    check_q = "SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s"
-    existe = executar_query(check_q, (prod['id'], emp_id), fetch=True, single=True)
-    
-    if existe:
-        nova_qtd = existe['quantidade'] + qtd
-        executar_query("UPDATE contagem_itens SET quantidade=%s WHERE id=%s", (nova_qtd, existe['id']))
-    else:
-        executar_query(
-            "INSERT INTO contagem_itens (empresa_id, produto_id, quantidade) VALUES (%s, %s, %s)",
-            (emp_id, prod['id'], qtd)
-        )
+        query_prod = """
+            SELECT id, codigo, descricao 
+            FROM produtos 
+            WHERE empresa_id = %s AND ativo = 1 
+            AND (codigo_barras = %s OR codigo = %s)
+            LIMIT 1
+        """
+        prod = executar_query(query_prod, (emp_id, ident, ident), fetch=True, single=True)
         
-    return jsonify({'success': True, 'message': f"Ok: {prod['descricao']}", 'produto': prod})
+        if not prod:
+            print(f"❌ Produto não encontrado: {ident}")
+            return jsonify({'success': False, 'message': f'Produto {ident} não encontrado.'}), 404
+
+        print(f"✅ Produto encontrado: {prod['descricao']}")
+
+        # Verifica se já existe na contagem
+        check_q = "SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s"
+        existe = executar_query(check_q, (prod['id'], emp_id), fetch=True, single=True)
+        
+        if existe:
+            nova_qtd = existe['quantidade'] + qtd
+            
+            # Se a quantidade ficar <= 0, remove o item
+            if nova_qtd <= 0:
+                executar_query("DELETE FROM contagem_itens WHERE id=%s", (existe['id'],))
+                print(f"🗑️ Item removido da contagem: {prod['descricao']}")
+                return jsonify({
+                    'success': True, 
+                    'message': f"Item {prod['codigo']} removido da contagem", 
+                    'produto': prod,
+                    'removed': True
+                })
+            else:
+                executar_query("UPDATE contagem_itens SET quantidade=%s WHERE id=%s", (nova_qtd, existe['id']))
+                print(f"📝 Quantidade atualizada: {nova_qtd}")
+        else:
+            # Novo item na contagem
+            if qtd > 0:
+                executar_query(
+                    "INSERT INTO contagem_itens (empresa_id, produto_id, quantidade) VALUES (%s, %s, %s)",
+                    (emp_id, prod['id'], qtd)
+                )
+                print(f"➕ Novo item adicionado: {prod['descricao']}")
+            
+        return jsonify({
+            'success': True, 
+            'message': f"✅ {prod['descricao']}", 
+            'produto': prod
+        })
+        
+    except Exception as e:
+        print(f"❌ Erro no endpoint /api/contagem/add: {str(e)}")
+        return jsonify({'success': False, 'message': f'Erro interno: {str(e)}'}), 500
 
 @app.route('/api/contagem/list')
 @login_required
 def api_contagem_list():
-    query = """
-        SELECT ci.id, p.id as produto_id, p.codigo, p.descricao, ci.quantidade 
-        FROM contagem_itens ci
-        JOIN produtos p ON ci.produto_id = p.id
-        WHERE ci.empresa_id = %s
-        ORDER BY ci.data_registro DESC
-    """
-    itens = executar_query(query, (session['empresa_id'],), fetch=True)
-    return jsonify({'success': True, 'itens': itens or []})
+    try:
+        query = """
+            SELECT ci.id, p.id as produto_id, p.codigo, p.descricao, ci.quantidade 
+            FROM contagem_itens ci
+            JOIN produtos p ON ci.produto_id = p.id
+            WHERE ci.empresa_id = %s
+            ORDER BY ci.data_registro DESC
+        """
+        itens = executar_query(query, (session['empresa_id'],), fetch=True)
+        return jsonify({'success': True, 'itens': itens or []})
+    except Exception as e:
+        print(f"❌ Erro ao listar contagem: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/contagem/finalizar', methods=['POST'])
 @login_required
@@ -534,7 +583,7 @@ def api_contagem_finalizar():
     
     conn = get_db_connection()
     if not conn:
-        return jsonify({'success': False, 'message': 'Erro de conexão'})
+        return jsonify({'success': False, 'message': 'Erro de conexão'}), 500
         
     cursor = conn.cursor(dictionary=True)
     try:
@@ -542,7 +591,7 @@ def api_contagem_finalizar():
         itens = cursor.fetchall()
         
         if not itens:
-            return jsonify({'success': False, 'message': 'Nada para salvar.'})
+            return jsonify({'success': False, 'message': 'Nada para salvar.'}), 400
             
         for item in itens:
             cursor.execute(
@@ -556,11 +605,14 @@ def api_contagem_finalizar():
             
         cursor.execute("DELETE FROM contagem_itens WHERE empresa_id = %s", (emp_id,))
         conn.commit()
+        
+        print(f"✅ Contagem finalizada: {len(itens)} itens atualizados")
         return jsonify({'success': True, 'total_itens': len(itens)})
         
     except Error as e:
         conn.rollback()
-        return jsonify({'success': False, 'message': str(e)})
+        print(f"❌ Erro ao finalizar contagem: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
     finally:
         cursor.close()
         conn.close()
