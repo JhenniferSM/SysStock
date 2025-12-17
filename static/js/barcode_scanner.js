@@ -32,6 +32,7 @@ function toggleCamera() {
                 target: interactive,
                 constraints: {
                     facingMode: "environment",
+                    focusMode: "continuous",
                     width: { min: 640, ideal: 1280, max: 1920 },
                     height: { min: 480, ideal: 720, max: 1080 },
                     aspectRatio: { ideal: 16/9 }
@@ -52,12 +53,7 @@ function toggleCamera() {
                 readers: [
                     "ean_reader",
                     "ean_8_reader",
-                    "code_128_reader",
-                    "code_39_reader",
-                    "code_39_vin_reader",
-                    "upc_reader",
-                    "upc_e_reader",
-                    "i2of5_reader"
+                    "code_128_reader"
                 ],
                 multiple: false
             },
@@ -148,7 +144,6 @@ function adicionarItemApi(identifier, quantidade) {
         return;
     }
 
-
     requestInProgress = true;
     const startTime = Date.now();
     
@@ -156,26 +151,15 @@ function adicionarItemApi(identifier, quantidade) {
     
     fetch('/api/contagem/add', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
             identifier: identifier, 
             quantidade: quantidade 
         })
     })
     .then(response => {
-        const elapsed = Date.now() - startTime;
-        console.log(`⏱️ Resposta recebida em ${elapsed}ms`);
-        
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return response.json();
-    })
-    .then(response => {
-        if (!response.ok) { 
-            return response.json().then(err => { throw new Error(err.message) });
+            return response.json().then(err => { throw new Error(err.message || `Erro ${response.status}`) });
         }
         return response.json();
     })
@@ -183,52 +167,25 @@ function adicionarItemApi(identifier, quantidade) {
         if (data.success) {
             beep();
             console.log("✅ Sucesso:", data.message);
-            flashMensagem(`✅ ${data.message}`, 'success');
-            
-            // Se o item foi removido
-            if (data.removed) {
-                contagemItens = contagemItens.filter(item => item.produto_id !== data.produto.id);
-            } else {
-                // Atualiza ou adiciona na lista local
-                let itemAtualizado = false;
-                for (let i = 0; i < contagemItens.length; i++) {
-                    if (contagemItens[i].produto_id === data.produto.id) {
-                        contagemItens[i].quantidade += quantidade;
-                        itemAtualizado = true;
-                        break;
-                    }
-                }
-                
-                if (!itemAtualizado) {
-                    contagemItens.unshift({
-                        id: Date.now(),
-                        produto_id: data.produto.id,
-                        codigo: data.produto.codigo,
-                        descricao: data.produto.descricao,
-                        quantidade: quantidade
-                    });
-                }
-            }
-            
-            atualizarTabelaContagem(contagemItens);
+            flashMensagem(data.message, 'success');
+            fetchItensContagem(); 
             
         } else {
             console.error("❌ Erro da API:", data.message);
-            flashMensagem(`❌ ${data.message || 'Produto não encontrado'}`, 'error');
+            flashMensagem(data.message || 'Produto não encontrado', 'error');
         }
-        
-        isProcessing = false;
-        requestInProgress = false;
-        
     })
     .catch(err => {
-        console.error("❌ Erro de rede:", err);
-        flashMensagem(`❌ Erro: ${err.message}`, 'error');
+        console.error("❌ Erro de rede ou processamento:", err);
+        flashMensagem(`Erro: ${err.message}`, 'error');
+    })
+    .finally(() => {
         isProcessing = false;
         requestInProgress = false;
+        const elapsed = Date.now() - startTime;
+        console.log(`⏱️ Ciclo finalizado em ${elapsed}ms`);
     });
 }
-
 // Atualiza a tabela com os itens contados
 function atualizarTabelaContagem(itens) {
     const tabelaBody = document.querySelector('#tabelaContagem tbody');
@@ -253,7 +210,7 @@ function atualizarTabelaContagem(itens) {
         row.innerHTML = `
             <td><strong>${item.codigo}</strong></td>
             <td>${item.descricao}</td>
-            <td style="font-weight:bold; color:#667eea;">${item.quantidade.toFixed(3)}</td>
+            <td style="font-weight:bold; color:#667eea;">${Number(item.quantidade).toFixed(3)}</td>
             <td>
                 <button class="btn btn-danger btn-sm" 
                         onclick="removerItemLocal('${item.codigo}')"

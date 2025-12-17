@@ -524,19 +524,20 @@ def api_contagem_add():
 @app.route('/api/contagem/list')
 @login_required
 def api_contagem_list():
-    try:
-        query = """
-            SELECT ci.id, p.id as produto_id, p.codigo, p.descricao, ci.quantidade 
-            FROM contagem_itens ci
-            JOIN produtos p ON ci.produto_id = p.id
-            WHERE ci.empresa_id = %s
-            ORDER BY ci.data_registro DESC
-        """
-        itens = executar_query(query, (session['empresa_id'],), fetch=True)
-        return jsonify({'success': True, 'itens': itens or []})
-    except Exception as e:
-        print(f"❌ Erro ao listar contagem: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+    query = """
+        SELECT ci.id, p.id as produto_id, p.codigo, p.descricao, ci.quantidade 
+        FROM contagem_itens ci
+        JOIN produtos p ON ci.produto_id = p.id
+        WHERE ci.empresa_id = %s
+        ORDER BY ci.data_registro DESC
+    """
+    itens = executar_query(query, (session['empresa_id'],), fetch=True)
+  
+    if itens:
+        for item in itens:
+            item['quantidade'] = float(item['quantidade'])
+            
+    return jsonify({'success': True, 'itens': itens or []})
 
 @app.route('/api/contagem/clear', methods=['POST'])
 @login_required
