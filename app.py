@@ -495,19 +495,25 @@ def contagem():
 def api_contagem_add():
     try:
         data = request.json
-        # Remove tudo que não é número para comparar com código de barras
-        ident = re.sub(r'\D', '', str(data.get('identifier', '')))
-        qtd = float(data.get('quantidade', 1)) # Simplificando para garantir o tipo
+        ident = str(data.get('identifier', '')).strip()
+        try:
+            qtd = float(data.get('quantidade', 1))
+        except (ValueError, TypeError):
+            qtd = 1.0
+
         emp_id = session.get('empresa_id')
 
-        # Busca o produto
-        query_prod = "SELECT id, descricao FROM produtos WHERE empresa_id = %s AND (codigo_barras = %s OR codigo = %s) AND ativo = 1"
+        query_prod = """
+            SELECT id, descricao FROM produtos 
+            WHERE empresa_id = %s 
+            AND (codigo_barras = %s OR codigo = %s) 
+            AND ativo = 1
+        """
         prod = executar_query(query_prod, (emp_id, ident, ident), fetch=True, single=True)
         
         if not prod:
-            return jsonify({'success': False, 'message': 'Produto não encontrado.'}), 404
+            return jsonify({'success': False, 'message': f'Produto "{ident}" não encontrado.'}), 404
 
-        # Verifica se já existe na contagem temporária
         check = executar_query("SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s", (prod['id'], emp_id), fetch=True, single=True)
         
         if check:
@@ -518,7 +524,7 @@ def api_contagem_add():
             
         return jsonify({'success': True, 'message': f"Adicionado: {prod['descricao']}"})
     except Exception as e:
-        print(f"Erro Fatal: {e}")
+        print(f"Erro Fatal API Add: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/contagem/list')

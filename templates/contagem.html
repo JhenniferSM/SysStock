@@ -62,7 +62,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {# Linhas serão preenchidas via JavaScript #}
+                    {# Preenchido via JS #}
                 </tbody>
             </table>
         </div>
@@ -79,32 +79,15 @@
 
 <style>
     .hidden { display: none !important; }
-    
-    /* Vídeo do Quagga */
     #interactive video, #interactive canvas { 
         width: 100% !important; 
         height: 100% !important; 
         object-fit: cover; 
     }
-    
-    /* Canvas de desenho sobreposto */
-    #interactive canvas.drawingBuffer {
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
-    
-    /* Animação de pulso na linha de scan */
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-    
-    #camera-overlay {
-        animation: pulse 1.5s infinite;
-    }
+    #interactive canvas.drawingBuffer { position: absolute; top: 0; left: 0; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    #camera-overlay { animation: pulse 1.5s infinite; }
 </style>
-
 {% endblock %}
 
 {% block extra_js %}
@@ -112,82 +95,74 @@
     <script src="{{ url_for('static', filename='js/barcode_scanner.js') }}"></script>
 
     <script>
-    // Atualiza contador de itens
-    function atualizarContador() {
-        document.getElementById('totalItens').textContent = contagemItens.length;
-    }
-
-    // Sobrescrever a função original para incluir contador e carregar ao iniciar
-    window.addEventListener('load', function() {
-        // Sobrescreve a função atualizarTabelaContagem do barcode_scanner.js
-        const originalAtualizarTabela = window.atualizarTabelaContagem;
-        window.atualizarTabelaContagem = function(itens) {
-            originalAtualizarTabela(itens);
-            atualizarContador(); // Chama a função local
-            const btnFinalizar = document.getElementById('btnFinalizar');
-            if (itens && itens.length > 0) {
-                btnFinalizar.style.display = 'block';
-            } else {
-                btnFinalizar.style.display = 'none';
+    window.fetchItensContagem = async function() {
+        try {
+            const response = await fetch('/api/contagem/list');
+            const data = await response.json();
+            
+            if (data.success) {
+                window.contagemItens = data.itens;
+                
+                if (typeof window.atualizarTabelaContagem === 'function') {
+                    window.atualizarTabelaContagem(data.itens);
+                }
+                
+                document.getElementById('totalItens').textContent = data.itens.length;
+                document.getElementById('btnFinalizar').style.display = data.itens.length > 0 ? 'block' : 'none';
             }
-        };
+        } catch (err) {
+            console.error("Erro ao carregar lista de contagem:", err);
+        }
+    };
+
+
+    window.addEventListener('load', function() {
+        window.fetchItensContagem();
         
-        // Dispara a carga inicial dos itens de contagem
-        window.atualizarTabelaContagem(window.contagemItens || []); 
-        fetchItensContagem();
-        
-        // Evento de Enter no campo manual
         const inputManual = document.getElementById('inputManual');
         if (inputManual) {
-            inputManual.addEventListener("keypress", function(event) {
-                if (event.key === "Enter") {
-                    event.preventDefault();
+            inputManual.addEventListener("keypress", function(e) {
+                if (e.key === "Enter") {
+                    e.preventDefault();
                     adicionarItemManual();
                 }
             });
         }
     });
 
-    // Busca os itens existentes no banco de dados ao carregar a página
-    function fetchItensContagem() {
-        fetch('/api/contagem/list')
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    window.contagemItens = data.itens;
-                    window.atualizarTabelaContagem(data.itens);
-                } else {
-                    console.error("Erro ao carregar contagem:", data.message);
-                }
-            })
-            .catch(err => console.error("Erro de comunicação ao carregar contagem:", err));
-    }
 
-    // Função para adicionar item manualmente (código ou EAN)
     function adicionarItemManual() {
         const input = document.getElementById('inputManual');
         const codigo = input.value.trim();
+        const qtdInput = document.getElementById('inputQtd');
+        const quantidade = qtdInput ? parseFloat(qtdInput.value) || 1 : 1;
+
         if (!codigo) {
             alert('Digite um código ou EAN.');
             return;
         }
         
-        // Chama a função central do scanner
-        processarCodigo(codigo, 1.0);
-        input.value = ''; // Limpa o campo
+        if (typeof processarCodigo === 'function') {
+            processarCodigo(codigo, quantidade);
+        }
+        
+        input.value = ''; 
         input.focus();
     }
 
-    // Sobrescreve a função de processamento de código do scanner
-    const originalProcessarCodigo = window.processarCodigo;
-    window.processarCodigo = function(code, quantidade) {
-        if (originalProcessarCodigo) {
-            originalProcessarCodigo(code, quantidade);
-        } else {
-            // Se a função não foi carregada (erro), tenta o processamento manual
-            adicionarItemApi(code, quantidade);
-        }
-    }
+    function finalizarContagem() {
+        if (!confirm("Deseja finalizar a contagem e atualizar o estoque real?")) return;
 
-</script>
+        fetch('/api/contagem/finalizar', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert("✅ Estoque atualizado com sucesso!");
+                    window.location.reload();
+                } else {
+                    alert("❌ Erro: " + data.message);
+                }
+            });
+    }
+    </script>
 {% endblock %}
