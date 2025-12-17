@@ -7,17 +7,16 @@ import re
 import os
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'chave_secreta_padrao')
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hora
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'chave_secreta_padrao_mude_me')
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600
 
-# ==================== CONFIGURAÇÃO DE BANCO ÚNICO ====================
+# ==================== CONEXÃO ÚNICA ====================
 
 def get_db_connection():
-    """Cria uma conexão com o banco de dados único"""
+    """Conexão única com o banco multi-tenant"""
     try:
         conn = mysql.connector.connect(
             host=os.getenv('DB_HOST'),
@@ -32,24 +31,18 @@ def get_db_connection():
         return None
 
 def executar_query(query, params=None, fetch=False, single=False):
-    """
-    Executa query no banco único.
-    Não precisa mais receber 'config', pois pega do .env
-    """
+    """Executa query com tratamento de erro"""
     conn = get_db_connection()
     if conn is None:
         return None
-        
     try:
         cursor = conn.cursor(dictionary=True, buffered=True)
         cursor.execute(query, params or ())
-        
         if fetch:
             result = cursor.fetchone() if single else cursor.fetchall()
         else:
             conn.commit()
             result = True
-            
         return result
     except Error as e:
         print(f"❌ Erro query: {e}")
@@ -91,7 +84,7 @@ def master_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ==================== ROTAS DE AUTENTICAÇÃO ====================
+# ==================== AUTENTICAÇÃO ====================
 
 @app.route('/')
 def index():
@@ -106,14 +99,12 @@ def login():
         usuario = request.form.get('usuario', '').strip()
         senha = request.form.get('senha', '').strip()
         
-        # --- LOGIN MASTER ---
+        # LOGIN MASTER
         if empresa_tag.upper() == 'MASTER':
             query = """
                 SELECT id, usuario, nome, is_master, ativo 
                 FROM usuarios 
-                WHERE usuario = %s 
-                AND senha = SHA2(%s, 256) 
-                AND is_master = 1
+                WHERE usuario = %s AND senha = SHA2(%s, 256) AND is_master = 1
             """
             user = executar_query(query, (usuario, senha), fetch=True, single=True)
             
@@ -122,29 +113,24 @@ def login():
                 session['user_id'] = user['id']
                 session['user_name'] = user['nome']
                 session['is_master'] = True
-                session['is_admin'] = True # Master é admin supremo
+                session['is_admin'] = True
                 return jsonify({'success': True, 'redirect': url_for('gerenciar_empresas')})
             else:
                 return jsonify({'success': False, 'message': 'Credenciais Master inválidas.'})
 
-        # --- LOGIN EMPRESA (TENANT) ---
-        # 1. Busca a empresa pela TAG
+        # LOGIN EMPRESA
         query_emp = "SELECT id, descricao, ativo FROM empresas WHERE tag = %s"
         empresa = executar_query(query_emp, (empresa_tag,), fetch=True, single=True)
 
         if not empresa:
             return jsonify({'success': False, 'message': 'Empresa não encontrada.'})
-            
         if empresa['ativo'] != 'S':
-            return jsonify({'success': False, 'message': 'Empresa inativa. Contate o suporte.'})
+            return jsonify({'success': False, 'message': 'Empresa inativa.'})
 
-        # 2. Busca usuário vinculado a essa empresa
         query_user = """
             SELECT id, usuario, nome, is_admin, ativo 
             FROM usuarios 
-            WHERE usuario = %s 
-            AND senha = SHA2(%s, 256) 
-            AND empresa_id = %s
+            WHERE usuario = %s AND senha = SHA2(%s, 256) AND empresa_id = %s
         """
         user = executar_query(query_user, (usuario, senha, empresa['id']), fetch=True, single=True)
 
@@ -152,7 +138,7 @@ def login():
             session.clear()
             session['user_id'] = user['id']
             session['user_name'] = user['nome']
-            session['empresa_id'] = empresa['id']     # <--- O SEGREDO DO MULTI-TENANT
+            session['empresa_id'] = empresa['id']
             session['empresa_nome'] = empresa['descricao']
             session['is_master'] = False
             session['is_admin'] = bool(user['is_admin'])
@@ -167,13 +153,12 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# ==================== ÁREA MASTER (GERENCIAR SAAS) ====================
+# ==================== MASTER - GERENCIAR EMPRESAS ====================
 
 @app.route('/master/empresas')
 @login_required
 @master_required
 def gerenciar_empresas():
-    # Lista empresas cadastradas no mesmo banco
     query = "SELECT * FROM empresas ORDER BY id DESC"
     empresas = executar_query(query, fetch=True)
     return render_template('gerenciar_empresas.html', empresas=empresas)
@@ -185,39 +170,64 @@ def empresa_nova():
     if request.method == 'POST':
         tag = request.form['tag'].lower().strip()
         descricao = request.form['descricao'].strip()
-        
-        # Admin da nova empresa
         admin_user = request.form['admin_usuario'].strip()
         admin_nome = request.form['admin_nome'].strip()
         admin_senha = request.form['admin_senha'].strip()
 
         conn = get_db_connection()
+        if not conn:
+            flash('Erro de conexão com banco de dados.', 'error')
+            return redirect(url_for('gerenciar_empresas'))
+            
         cursor = conn.cursor()
         try:
-            # 1. Cria Empresa
+            # Cria Empresa
             cursor.execute(
                 "INSERT INTO empresas (tag, descricao, ativo) VALUES (%s, %s, 'S')",
                 (tag, descricao)
             )
             empresa_id = cursor.lastrowid
 
-            # 2. Cria Usuário Admin vinculado à empresa
+            # Cria Admin da Empresa
             cursor.execute("""
                 INSERT INTO usuarios (empresa_id, usuario, nome, senha, is_admin, ativo)
                 VALUES (%s, %s, %s, SHA2(%s, 256), 1, 1)
             """, (empresa_id, admin_user, admin_nome, admin_senha))
 
             conn.commit()
-            flash(f'Empresa {descricao} criada com sucesso!', 'success')
+            flash(f'✅ Empresa "{descricao}" criada com sucesso!', 'success')
             return redirect(url_for('gerenciar_empresas'))
         except Error as e:
             conn.rollback()
-            flash(f'Erro ao criar empresa (Tag ou Usuário já existem?): {e}', 'error')
+            flash(f'❌ Erro: {str(e)}', 'error')
         finally:
             cursor.close()
             conn.close()
 
     return render_template('empresa_form.html', empresa=None)
+
+@app.route('/master/empresa/editar/<int:id>', methods=['GET', 'POST'])
+@login_required
+@master_required
+def empresa_editar(id):
+    if request.method == 'GET':
+        query = "SELECT * FROM empresas WHERE id = %s"
+        empresa = executar_query(query, (id,), fetch=True, single=True)
+        if not empresa:
+            flash('Empresa não encontrada.', 'error')
+            return redirect(url_for('gerenciar_empresas'))
+        return render_template('empresa_form.html', empresa=empresa)
+    
+    # POST - Atualização
+    tag = request.form['tag'].lower().strip()
+    descricao = request.form['descricao'].strip()
+    
+    query = "UPDATE empresas SET tag=%s, descricao=%s WHERE id=%s"
+    if executar_query(query, (tag, descricao, id)):
+        flash('Empresa atualizada com sucesso!', 'success')
+    else:
+        flash('Erro ao atualizar empresa.', 'error')
+    return redirect(url_for('gerenciar_empresas'))
 
 @app.route('/master/empresa/toggle/<int:id>')
 @login_required
@@ -228,17 +238,17 @@ def empresa_toggle_status(id):
     flash('Status atualizado.', 'success')
     return redirect(url_for('gerenciar_empresas'))
 
-# ==================== ÁREA DO CLIENTE (DASHBOARD & SISTEMA) ====================
+# ==================== DASHBOARD ====================
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    if session.get('is_master'): return redirect(url_for('gerenciar_empresas'))
+    if session.get('is_master'): 
+        return redirect(url_for('gerenciar_empresas'))
     
-    emp_id = session['empresa_id'] # Pega ID da sessão
+    emp_id = session['empresa_id']
     
-    # Busca stats filtrando por empresa_id (usando a view ou query direta)
-    # Nota: A View precisa ter empresa_id. Se a view não tiver, fazemos query direta:
+    # Stats
     query_stats = """
         SELECT 
             COUNT(id) as total_produtos,
@@ -249,7 +259,6 @@ def dashboard():
     """
     stats_data = executar_query(query_stats, (emp_id,), fetch=True, single=True)
     
-    # Total Usuários
     query_users = "SELECT COUNT(id) as total FROM usuarios WHERE empresa_id = %s AND ativo = 1"
     total_users = executar_query(query_users, (emp_id,), fetch=True, single=True)
 
@@ -260,7 +269,7 @@ def dashboard():
         'total_usuarios': total_users['total'] or 0
     }
 
-    # Top 5 produtos baixo estoque
+    # Top 5 baixo estoque
     query_min = """
         SELECT id, codigo, descricao, quantidade, unidade 
         FROM produtos 
@@ -271,12 +280,13 @@ def dashboard():
 
     return render_template('dashboard.html', stats=stats, min_stock_produtos=min_stock)
 
-# --- PRODUTOS ---
+# ==================== PRODUTOS ====================
 
 @app.route('/produtos')
 @login_required
 def produtos():
-    if session.get('is_master'): return redirect(url_for('gerenciar_empresas'))
+    if session.get('is_master'): 
+        return redirect(url_for('gerenciar_empresas'))
     
     emp_id = session['empresa_id']
     search = request.args.get('search', '')
@@ -297,11 +307,11 @@ def produtos():
 @app.route('/produto/novo', methods=['GET', 'POST'])
 @login_required
 def produto_novo():
-    if session.get('is_master'): return redirect(url_for('gerenciar_empresas'))
+    if session.get('is_master'): 
+        return redirect(url_for('gerenciar_empresas'))
     
     if request.method == 'POST':
         emp_id = session['empresa_id']
-        # Dados do form
         codigo = request.form['codigo']
         ean = request.form.get('ean')
         descricao = request.form['descricao']
@@ -319,7 +329,7 @@ def produto_novo():
             flash('Produto criado!', 'success')
             return redirect(url_for('produtos'))
         else:
-            flash('Erro: Código duplicado nesta empresa?', 'error')
+            flash('Erro: Código duplicado?', 'error')
 
     return render_template('produto_form.html', produto=None)
 
@@ -328,7 +338,6 @@ def produto_novo():
 def produto_editar(id):
     emp_id = session.get('empresa_id')
     
-    # SEGURANÇA: Garante que o produto pertence à empresa logada
     query_get = "SELECT * FROM produtos WHERE id = %s AND empresa_id = %s"
     produto = executar_query(query_get, (id, emp_id), fetch=True, single=True)
     
@@ -337,7 +346,6 @@ def produto_editar(id):
         return redirect(url_for('produtos'))
         
     if request.method == 'POST':
-        # ... (Pega dados igual ao novo) ...
         codigo = request.form['codigo']
         ean = request.form.get('ean')
         descricao = request.form['descricao']
@@ -353,7 +361,7 @@ def produto_editar(id):
             WHERE id=%s AND empresa_id=%s
         """
         if executar_query(query_upd, (codigo, ean, descricao, unidade, qtd, custo, venda, id, emp_id)):
-            flash('Atualizado com sucesso.', 'success')
+            flash('Atualizado!', 'success')
             return redirect(url_for('produtos'))
             
     return render_template('produto_form.html', produto=produto)
@@ -361,14 +369,15 @@ def produto_editar(id):
 @app.route('/produto/excluir/<int:id>')
 @login_required
 def produto_excluir(id):
-    if not session.get('is_admin'): return redirect(url_for('produtos'))
+    if not session.get('is_admin'): 
+        return redirect(url_for('produtos'))
     
     query = "UPDATE produtos SET ativo = 0 WHERE id = %s AND empresa_id = %s"
     executar_query(query, (id, session['empresa_id']))
     flash('Produto excluído.', 'success')
     return redirect(url_for('produtos'))
 
-# --- USUÁRIOS (Da empresa) ---
+# ==================== USUÁRIOS ====================
 
 @app.route('/usuarios')
 @login_required
@@ -383,7 +392,8 @@ def usuarios():
 @app.route('/usuario/novo', methods=['GET', 'POST'])
 @login_required
 def usuario_novo():
-    if not session.get('is_admin'): return redirect(url_for('dashboard'))
+    if not session.get('is_admin'): 
+        return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
         usuario = request.form['usuario']
@@ -407,13 +417,14 @@ def usuario_novo():
 @app.route('/usuario/editar/<int:id>', methods=['GET', 'POST'])
 @login_required
 def usuario_editar(id):
-    if not session.get('is_admin'): return redirect(url_for('dashboard'))
+    if not session.get('is_admin'): 
+        return redirect(url_for('dashboard'))
     
-    # Segurança: usuário deve ser da mesma empresa
     query_get = "SELECT * FROM usuarios WHERE id = %s AND empresa_id = %s"
     user = executar_query(query_get, (id, session['empresa_id']), fetch=True, single=True)
     
-    if not user: return redirect(url_for('usuarios'))
+    if not user: 
+        return redirect(url_for('usuarios'))
     
     if request.method == 'POST':
         nome = request.form['nome']
@@ -438,7 +449,7 @@ def usuario_editar(id):
         
     return render_template('usuario_form.html', user=user, is_new=False)
 
-# --- MOVIMENTAÇÕES ---
+# ==================== MOVIMENTAÇÕES ====================
 
 @app.route('/movimentacoes')
 @login_required
@@ -448,23 +459,22 @@ def movimentacoes():
         FROM movimentacoes m
         JOIN produtos p ON m.produto_id = p.id
         LEFT JOIN usuarios u ON m.usuario_id = u.id
-        WHERE p.empresa_id = %s
+        WHERE m.empresa_id = %s
         ORDER BY m.data_hora DESC LIMIT 100
     """
     movs = executar_query(query, (session['empresa_id'],), fetch=True)
     return render_template('movimentacoes.html', movimentacoes=movs)
 
-# --- CONTAGEM (API) ---
+# ==================== CONTAGEM ====================
 
 @app.route('/contagem')
 @login_required
 def contagem():
-    # Itens na contagem atual da empresa
     query = """
         SELECT ci.id, p.id as produto_id, p.codigo, p.descricao, ci.quantidade 
         FROM contagem_itens ci
         JOIN produtos p ON ci.produto_id = p.id
-        WHERE p.empresa_id = %s
+        WHERE ci.empresa_id = %s
         ORDER BY ci.data_registro DESC
     """
     itens = executar_query(query, (session['empresa_id'],), fetch=True)
@@ -478,7 +488,6 @@ def api_contagem_add():
     qtd = clean_float(data.get('quantidade', 1))
     emp_id = session['empresa_id']
 
-    # 1. Busca produto NA EMPRESA CERTA
     query_prod = """
         SELECT id, codigo, descricao 
         FROM produtos 
@@ -490,10 +499,6 @@ def api_contagem_add():
     if not prod:
         return jsonify({'success': False, 'message': 'Produto não encontrado.'})
 
-    # 2. Add/Update na tabela contagem_itens
-    # (Note: tabela contagem_itens deve ter empresa_id para segurança extra, ou join no produto)
-    # Assumindo que contagem_itens tem empresa_id conforme sugerido no novo modelo
-    
     check_q = "SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s"
     existe = executar_query(check_q, (prod['id'], emp_id), fetch=True, single=True)
     
@@ -528,9 +533,11 @@ def api_contagem_finalizar():
     user_id = session['user_id']
     
     conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro de conexão'})
+        
     cursor = conn.cursor(dictionary=True)
     try:
-        # Pega itens
         cursor.execute("SELECT produto_id, quantidade FROM contagem_itens WHERE empresa_id = %s", (emp_id,))
         itens = cursor.fetchall()
         
@@ -538,18 +545,15 @@ def api_contagem_finalizar():
             return jsonify({'success': False, 'message': 'Nada para salvar.'})
             
         for item in itens:
-            # Atualiza produto
             cursor.execute(
                 "UPDATE produtos SET quantidade = %s WHERE id = %s AND empresa_id = %s",
                 (item['quantidade'], item['produto_id'], emp_id)
             )
-            # Log Movimentação
             cursor.execute("""
                 INSERT INTO movimentacoes (empresa_id, produto_id, tipo, quantidade, usuario_id)
                 VALUES (%s, %s, 'CONTAGEM', %s, %s)
             """, (emp_id, item['produto_id'], item['quantidade'], user_id))
             
-        # Limpa contagem dessa empresa
         cursor.execute("DELETE FROM contagem_itens WHERE empresa_id = %s", (emp_id,))
         conn.commit()
         return jsonify({'success': True, 'total_itens': len(itens)})
@@ -562,16 +566,20 @@ def api_contagem_finalizar():
         conn.close()
 
 # ==================== FILTROS ====================
+
 @app.template_filter('currency')
 def currency_filter(value):
-    try: return f"R$ {float(value):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-    except: return "R$ 0,00"
+    try: 
+        return f"R$ {float(value):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    except: 
+        return "R$ 0,00"
 
 @app.template_filter('datetime_format')
 def datetime_filter(value):
-    try: return value.strftime("%d/%m/%Y %H:%M")
-    except: return str(value)
+    try: 
+        return value.strftime("%d/%m/%Y %H:%M")
+    except: 
+        return str(value)
 
 if __name__ == '__main__':
-    # Em produção (Render/Railway), o Gunicorn vai chamar app, não o main.
     app.run(debug=True)

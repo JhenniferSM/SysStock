@@ -4,47 +4,124 @@
 
 {% block content %}
 <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
-    <h1>🏢 Gestão Multi-Empresarial</h1>
-    <a href="{{ url_for('empresa_nova') }}" class="btn btn-primary">+ Nova Empresa</a>
+    <div>
+        <h1>🏢 Gestão Multi-Empresarial</h1>
+        <p style="color: #666; margin-top: 5px;">
+            Modelo Multi-Tenant - Todas as empresas no mesmo banco de dados
+        </p>
+    </div>
+    <a href="{{ url_for('empresa_nova') }}" class="btn btn-primary">
+        ✨ Nova Empresa
+    </a>
 </div>
 
-<div class="stat-card" style="margin-top:20px;">
+<div class="stat-card" style="margin-top: 20px;">
+    {% if empresas %}
     <table>
         <thead>
             <tr>
-                <th>Tag (Login)</th>
-                <th>Empresa</th>
-                <th>Banco de Dados</th>
-                <th>Status</th>
-                <th>Ações</th>
+                <th style="width: 80px;">ID</th>
+                <th style="width: 150px;">Tag (Login)</th>
+                <th>Nome da Empresa</th>
+                <th style="width: 120px; text-align: center;">Status</th>
+                <th style="width: 180px; text-align: center;">Ações</th>
             </tr>
         </thead>
         <tbody>
             {% for emp in empresas %}
             <tr>
-                <td><strong>{{ emp.tag }}</strong></td>
-                <td>{{ emp.descricao }}</td>
-                <td>{{ emp.base }}</td>
+                <td><strong>#{{ emp.id }}</strong></td>
                 <td>
+                    <code style="background: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-family: monospace;">
+                        {{ emp.tag }}
+                    </code>
+                </td>
+                <td>{{ emp.descricao }}</td>
+                <td style="text-align: center;">
                     {% if emp.ativo == 'S' %}
-                    <span style="color:green; font-weight:bold;">Ativa</span>
+                    <span class="badge bg-success">✓ Ativa</span>
                     {% else %}
-                    <span style="color:red; font-weight:bold;">Inativa</span>
+                    <span class="badge bg-danger">✗ Inativa</span>
                     {% endif %}
                 </td>
-                <td>
-                    <a href="{{ url_for('empresa_editar', id=emp['id']) }}" class="btn btn-secondary btn-sm">Editar</a>
-                    <a href="{{ url_for('empresa_toggle_status', id=emp['id']) }}" 
+                <td style="text-align: center;">
+                    <a href="{{ url_for('empresa_editar', id=emp.id) }}" 
+                       class="btn btn-secondary btn-sm">
+                       ✏️ Editar
+                    </a>
+                    <a href="{{ url_for('empresa_toggle_status', id=emp.id) }}" 
                        class="btn {{ 'btn-danger' if emp.ativo == 'S' else 'btn-success' }} btn-sm"
-                       onclick="return confirm('Alterar status da empresa?')">
-                       {{ 'Desativar' if emp.ativo == 'S' else 'Ativar' }}
+                       onclick="return confirm('Alterar status da empresa {{ emp.descricao }}?')">
+                       {{ '⏸️ Desativar' if emp.ativo == 'S' else '▶️ Ativar' }}
                     </a>
                 </td>
             </tr>
-            {% else %}
-            <tr><td colspan="5" align="center">Nenhuma empresa cadastrada.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    {% else %}
+    <div style="text-align: center; padding: 60px 20px;">
+        <div style="font-size: 4rem; margin-bottom: 20px;">🏢</div>
+        <h3 style="color: #666; margin-bottom: 10px;">Nenhuma empresa cadastrada</h3>
+        <p style="color: #999; margin-bottom: 30px;">
+            Comece criando sua primeira empresa no sistema
+        </p>
+        <a href="{{ url_for('empresa_nova') }}" class="btn btn-primary">
+            ✨ Criar Primeira Empresa
+        </a>
+    </div>
+    {% endif %}
 </div>
+
+<div class="stat-card" style="margin-top: 20px; background: #f8f9fa;">
+    <h3 style="margin-bottom: 15px;">📋 Informações do Sistema</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+        <div>
+            <strong>Total de Empresas:</strong> {{ empresas|length if empresas else 0 }}
+        </div>
+        <div>
+            <strong>Empresas Ativas:</strong> 
+            {{ empresas|selectattr('ativo', 'equalto', 'S')|list|length if empresas else 0 }}
+        </div>
+        <div>
+            <strong>Modelo:</strong> Multi-Tenant (Banco Único)
+        </div>
+    </div>
+</div>
+
+<style>
+    .badge {
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #fff;
+        display: inline-block;
+    }
+    
+    .bg-success {
+        background-color: #28a745;
+    }
+    
+    .bg-danger {
+        background-color: #dc3545;
+    }
+    
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+    }
+    
+    code {
+        font-family: 'Courier New', Courier, monospace;
+    }
+    
+    table {
+        width: 100%;
+    }
+    
+    tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+</style>
 {% endblock %}
