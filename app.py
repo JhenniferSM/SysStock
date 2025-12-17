@@ -495,68 +495,31 @@ def contagem():
 def api_contagem_add():
     try:
         data = request.json
-        if not data:
-            return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
-            
+        # Remove tudo que não é número para comparar com código de barras
         ident = re.sub(r'\D', '', str(data.get('identifier', '')))
-        qtd = clean_float(data.get('quantidade', 1))
-        emp_id = session['empresa_id']
+        qtd = float(data.get('quantidade', 1)) # Simplificando para garantir o tipo
+        emp_id = session.get('empresa_id')
 
-        print(f"🔍 Buscando produto: {ident}")
-
-        query_prod = """
-            SELECT id, codigo, descricao 
-            FROM produtos 
-            WHERE empresa_id = %s AND ativo = 1 
-            AND (codigo_barras = %s OR codigo = %s)
-            LIMIT 1
-        """
+        # Busca o produto
+        query_prod = "SELECT id, descricao FROM produtos WHERE empresa_id = %s AND (codigo_barras = %s OR codigo = %s) AND ativo = 1"
         prod = executar_query(query_prod, (emp_id, ident, ident), fetch=True, single=True)
         
         if not prod:
-            print(f"❌ Produto não encontrado: {ident}")
-            return jsonify({'success': False, 'message': f'Produto {ident} não encontrado.'}), 404
+            return jsonify({'success': False, 'message': 'Produto não encontrado.'}), 404
 
-        print(f"✅ Produto encontrado: {prod['descricao']}")
-
-        # Verifica se já existe na contagem
-        check_q = "SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s"
-        existe = executar_query(check_q, (prod['id'], emp_id), fetch=True, single=True)
+        # Verifica se já existe na contagem temporária
+        check = executar_query("SELECT id, quantidade FROM contagem_itens WHERE produto_id = %s AND empresa_id = %s", (prod['id'], emp_id), fetch=True, single=True)
         
-        if existe:
-            nova_qtd = existe['quantidade'] + qtd
-            
-            # Se a quantidade ficar <= 0, remove o item
-            if nova_qtd <= 0:
-                executar_query("DELETE FROM contagem_itens WHERE id=%s", (existe['id'],))
-                print(f"🗑️ Item removido da contagem: {prod['descricao']}")
-                return jsonify({
-                    'success': True, 
-                    'message': f"Item {prod['codigo']} removido da contagem", 
-                    'produto': prod,
-                    'removed': True
-                })
-            else:
-                executar_query("UPDATE contagem_itens SET quantidade=%s WHERE id=%s", (nova_qtd, existe['id']))
-                print(f"📝 Quantidade atualizada: {nova_qtd}")
+        if check:
+            nova_qtd = float(check['quantidade']) + qtd
+            executar_query("UPDATE contagem_itens SET quantidade = %s WHERE id = %s", (nova_qtd, check['id']))
         else:
-            # Novo item na contagem
-            if qtd > 0:
-                executar_query(
-                    "INSERT INTO contagem_itens (empresa_id, produto_id, quantidade) VALUES (%s, %s, %s)",
-                    (emp_id, prod['id'], qtd)
-                )
-                print(f"➕ Novo item adicionado: {prod['descricao']}")
+            executar_query("INSERT INTO contagem_itens (empresa_id, produto_id, quantidade) VALUES (%s, %s, %s)", (emp_id, prod['id'], qtd))
             
-        return jsonify({
-            'success': True, 
-            'message': f"✅ {prod['descricao']}", 
-            'produto': prod
-        })
-        
+        return jsonify({'success': True, 'message': f"Adicionado: {prod['descricao']}"})
     except Exception as e:
-        print(f"❌ Erro no endpoint /api/contagem/add: {str(e)}")
-        return jsonify({'success': False, 'message': f'Erro interno: {str(e)}'}), 500
+        print(f"Erro Fatal: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/contagem/list')
 @login_required
@@ -574,6 +537,13 @@ def api_contagem_list():
     except Exception as e:
         print(f"❌ Erro ao listar contagem: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/contagem/clear', methods=['POST'])
+@login_required
+def api_contagem_clear():
+    emp_id = session.get('empresa_id')
+    executar_query("DELETE FROM contagem_itens WHERE empresa_id = %s", (emp_id,))
+    return jsonify({'success': True, 'message': 'Contagem zerada com sucesso!'})
 
 @app.route('/api/contagem/finalizar', methods=['POST'])
 @login_required

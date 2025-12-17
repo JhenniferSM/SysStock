@@ -148,6 +148,7 @@ function adicionarItemApi(identifier, quantidade) {
         return;
     }
 
+
     requestInProgress = true;
     const startTime = Date.now();
     
@@ -169,6 +170,12 @@ function adicionarItemApi(identifier, quantidade) {
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(response => {
+        if (!response.ok) { 
+            return response.json().then(err => { throw new Error(err.message) });
         }
         return response.json();
     })
